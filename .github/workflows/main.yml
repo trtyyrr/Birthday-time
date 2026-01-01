@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro Ultimate (Phantom + BBR + Creek)
+name: OnePlus Pad Pro Ultimate Phantom-Re Build
 
 on:
   workflow_dispatch:
@@ -35,47 +35,41 @@ jobs:
           repo init -u "file://$GITHUB_WORKSPACE" -m Oneplus_pad_Pro.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle
 
-      # 【全能魔改注入】Phantom 调度 + BBR 网络 + Creek 内存
-      - name: Deep Kernel Injection
+      # --- 第一部分：内核源码深度注入 (内核的大脑) ---
+      - name: Deep Kernel Core Modding
         run: |
           cd workspace/kernel_platform/common
           
-          # 1. 网络革命：开启 BBR/BBRv2 扩展并设为默认
-          # 强制修改 TCP 拥塞控制配置
-          sed -i 's/CONFIG_TCP_CONG_CUBIC=y/CONFIG_TCP_CONG_CUBIC=y\nCONFIG_TCP_CONG_BBR=y/g' arch/arm64/configs/gki_defconfig
-          echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> arch/arm64/configs/gki_defconfig
-          
-          # 2. 跨核调度 (Phantom Render)：优化任务 Resched 逻辑
-          # 提升任务抢占敏感度
+          # 1. 跨核调度革命：Resched Hook 注入
           sed -i 's/RESCHED_CURR/RESCHED_FORCE/g' kernel/sched/core.c 2>/dev/null || true
           
-          # 3. 渲染加速：将渲染进程识别并推入 RT 调度类
+          # 2. 渲染进程实时加速 (RenderThread RT Priority)
           sed -i '/SCHED_NORMAL/a \	if (p->comm && strstr(p->comm, "RenderThread")) p->policy = SCHED_FIFO;' kernel/sched/core.c 2>/dev/null || true
 
-          # 4. Creek V 内存增强：优化 zRAM 压缩分配器
-          if [ -f "drivers/block/zram/zram_drv.c" ]; then
-            sed -i 's/num_pages \* sizeof(long)/num_pages \* sizeof(long) * 2/g' drivers/block/zram/zram_drv.c 2>/dev/null || true
-          fi
-
-          # 5. 内存管理：MGLRU 注入
+          # 3. 内存革命：MGLRU + Creek V zRAM 优化
           echo "CONFIG_LRU_GEN=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_LRU_GEN_ENABLED=y" >> arch/arm64/configs/gki_defconfig
+          if [ -f "drivers/block/zram/zram_drv.c" ]; then
+            sed -i 's/num_pages \* sizeof(long)/num_pages \* sizeof(long) * 2/g' drivers/block/zram/zram_drv.c
+          fi
 
-      - name: Vendor Config & Battery/Performance Balance
+          # 4. 网络革命：TCP BBR 强制默认
+          sed -i 's/CONFIG_TCP_CONG_CUBIC=y/CONFIG_TCP_CONG_CUBIC=y\nCONFIG_TCP_CONG_BBR=y/g' arch/arm64/configs/gki_defconfig
+          echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> arch/arm64/configs/gki_defconfig
+
+      - name: Vendor Config & Re-Kernel Slimming
         run: |
           cd workspace/kernel_platform/msm-kernel
-          # 禁用签名证书
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_TRUSTED_KEYS=.*/CONFIG_SYSTEM_TRUSTED_KEYS=""/g' {} +
           
-          # 写入厂商特定的性能补丁
           for cfg in arch/arm64/configs/vendor/pineapple_GKI.config arch/arm64/configs/vendor/sm8650_defconfig; do
             if [ -f "$cfg" ]; then
               echo "CONFIG_TCP_CONG_BBR=y" >> "$cfg"
-              echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> "$cfg"
-              echo "CONFIG_SCHED_CORE=y" >> "$cfg"
               echo "CONFIG_LRU_GEN=y" >> "$cfg"
               echo "CONFIG_HZ_300=y" >> "$cfg"
-              echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> "$cfg"
+              # 剔除冗余调试 (Re-Kernel 风格)
+              echo "CONFIG_SLUB_DEBUG=n" >> "$cfg"
+              echo "CONFIG_DEBUG_STACK_USAGE=n" >> "$cfg"
             fi
           done
 
@@ -85,29 +79,54 @@ jobs:
           chmod +x kernel_platform/oplus/build/oplus_build_kernel.sh
           ./kernel_platform/oplus/build/oplus_build_kernel.sh pineapple gki
 
-      - name: Pack AnyKernel3 (Ultimate Pack)
+      # --- 第二部分：AnyKernel3 打包 (刷机包) ---
+      - name: Pack AnyKernel3
         if: success()
         run: |
           cd workspace
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
           REAL_DIST_PATH=$(find . -name Image -not -path "*/AK3/*" -exec dirname {} + | head -n 1)
-          [ -z "$REAL_DIST_PATH" ] && exit 1
-          
           cd AK3
           cp "../$REAL_DIST_PATH/Image" .
           [ -f "../$REAL_DIST_PATH/dtbo.img" ] && cp "../$REAL_DIST_PATH/dtbo.img" .
-          [ -f "../$REAL_DIST_PATH/vendor_boot.img" ] && cp "../$REAL_DIST_PATH/vendor_boot.img" .
-          
-          mkdir -p modules/vendor/lib/modules
-          find "../$REAL_DIST_PATH" -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
-          
-          sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/g' anykernel.sh
-          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          zip -r9 ../../OnePlus_Pad_Pro_Ultimate_BBR.zip * -x .git* README.md
+          find "../$REAL_DIST_PATH" -name "*.ko" -exec cp {} . \;
+          zip -r9 ../../OnePlus_Pad_Pro_Ultimate_Kernel.zip *
 
-      - name: Upload Artifact
+      # --- 第三部分：生成配套 Magisk 优化模块 (附加模块) ---
+      - name: Create Phantom Magisk Module
+        if: success()
+        run: |
+          mkdir -p Phantom_Module/common
+          cd Phantom_Module
+          cat <<EOF > module.prop
+          id=phantom_optimizer
+          name=Phantom-Re Optimizer for OnePlus Pad Pro
+          version=v1.0
+          author=Gemini_Custom
+          description=配套内核优化：强制开启MGLRU、SSG调度、BBR加速及渲染进程置顶。
+          EOF
+
+          cat <<EOF > service.sh
+          #!/system/bin/sh
+          until [ "\$(getprop sys.boot_completed)" = "1" ]; do sleep 10; done
+          # 激活内核预设功能
+          echo y > /sys/kernel/mm/lru_gen/enabled
+          echo ssg > /sys/block/sda/queue/scheduler 2>/dev/null
+          sysctl -w net.ipv4.tcp_congestion_control=bbr
+          # 渲染线程置顶
+          while true; do
+            pgrep "RenderThread" | xargs -r chrt -f -p 99
+            sleep 60
+          done &
+          EOF
+          chmod +x service.sh
+          zip -r ../OnePlus_Pad_Pro_Magisk_Addon.zip *
+
+      - name: Upload All Artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus_Pad_Pro_Ultimate_BBR_Kernel
-          path: OnePlus_Pad_Pro_Ultimate_BBR.zip
+          name: OnePlus_Pad_Pro_Ultimate_Bundle
+          path: |
+            OnePlus_Pad_Pro_Ultimate_Kernel.zip
+            OnePlus_Pad_Pro_Magisk_Addon.zip
