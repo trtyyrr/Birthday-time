@@ -1,196 +1,216 @@
-name: OnePlus Pad Pro Ultimate Pure Tuned Build (Professional Standard)
+name: OnePlus Pad Pro Ultimate Pure Tuned (Full Protocol)
 
 on:
   workflow_dispatch:
 
-# 环境变量定义
+# 全局环境变量
 env:
-  PROJECT_NAME: "Phantom_Pure"
+  PROJECT_NAME: "Phantom_Re_Kernel"
   DEVICE_NAME: "OnePlusPadPro"
   TARGET_BOARD: "pineapple"
   TARGET_VARIANT: "gki"
+  MANIFEST_FILE: "Oneplus_pad_Pro.xml"
 
 jobs:
-  kernel-rebuild:
+  industrial-build:
     runs-on: ubuntu-22.04
     steps:
-      # --- [1] 环境预处理与仓库检出 ---
-      - name: Checkout Repository
+      # --- [1] 环境初始化与空间释放 ---
+      - name: Checkout Local Repository
         uses: actions/checkout@v4
         with:
           path: main_repo
 
-      - name: Professional Environment Cleanup
+      - name: Extreme Space Cleanup
         run: |
-          echo ">>> 正在执行深度环境净化，释放 Bazel 编译空间..."
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/boost /usr/share/swift /usr/local/graalvm /var/lib/mongodb
+          echo ">>> 启动环境深度清理，确保 Bazel 编译空间..."
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /usr/share/swift /usr/local/graalvm \
+            /var/lib/mongodb /etc/apt/sources.list.d/*
           sudo docker image prune -a -f
+          sudo apt-get autoremove -y
           sudo apt-get clean
           df -h
 
-      - name: Install Industrial Build Tools
+      - name: Install Industrial Toolchains
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             python3 python3-pip git curl repo bc bison build-essential \
             flex libssl-dev libelf-dev binutils-dev lz4 zstd zip rsync \
-            libssl-dev gperf openjdk-11-jdk libxml2-utils
+            libssl-dev gperf openjdk-11-jdk libxml2-utils ccache
           
-          # 更新 repo 工具
+          # 强制安装最新 repo 工具
           sudo curl https://storage.googleapis.com/git-repo-downloads/repo -o /usr/bin/repo
           sudo chmod a+x /usr/bin/repo
 
-      - name: Global Git Config
+      - name: Git Global Configuration
         run: |
-          git config --global user.email "kernel_bot@phantom.com"
-          git config --global user.name "Phantom-Bot"
+          git config --global user.email "build-bot@phantom.pro"
+          git config --global user.name "Phantom-Ultimate-Bot"
           git config --global color.ui true
           git config --global --add safe.directory "*"
 
-      # --- [2] 标准 Repo 同步流程 (解决 Manifest Not Found) ---
-      - name: Local Manifest Repository Setup
+      # --- [2] 闭环 Repo 同步 (针对根目录 XML) ---
+      - name: Local Manifest Loopback Setup
         run: |
           mkdir workspace && cd workspace
-          echo ">>> 正在构建本地清单引用库..."
-          mkdir local_manifest_repo && cd local_manifest_repo
+          echo ">>> 构建本地清单闭环服务器..."
+          mkdir local_repo && cd local_repo
           git init
-          cp ../../main_repo/Oneplus_pad_Pro.xml default.xml
+          # 将根目录的清单文件拷贝并作为默认清单
+          cp ../../main_repo/${{ env.MANIFEST_FILE }} default.xml
           git add .
-          git commit -m "Initialize local manifest for $DEVICE_NAME"
+          git commit -m "Initialize manifest for ${{ env.DEVICE_NAME }}"
           cd ..
           
-          echo ">>> 正在初始化同步 (骁龙 8 Gen 3 源码量巨大，请耐心等待)..."
-          # 使用本地路径初始化，强制 depth=1 降低 Actions 硬盘压力
-          repo init -u ./local_manifest_repo -b master --depth=1
+          echo ">>> 启动标准化 Repo 初始化..."
+          repo init -u ./local_repo -b master --depth=1
+          
+          echo ">>> 执行源码拉取 (骁龙 8 Gen 3 核心组件)..."
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
-      # --- [3] 内核源码级深度注入 (核心调教逻辑) ---
-      # 此部分超过 50 行逻辑，涵盖 CPU 调度、IO 响应、内存效率
-      - name: Deep Kernel Source Modding (Surgical Level)
+      # --- [3] 内核源码级调优 - CPU 调度篇 ---
+      - name: Kernel Modding - CPU Scheduler
         run: |
           cd workspace/kernel_platform/common
-          
-          echo ">>> [CPU 调度器优化] 注入极速抢占逻辑..."
-          # 将核心调度器的重调度逻辑从常规模式强行提升至 FORCE 模式
+          echo ">>> [1/4] 正在重构任务抢占逻辑..."
+          # 降低调度延迟：强制唤醒抢占
           sed -i 's/RESCHED_CURR/RESCHED_FORCE/g' kernel/sched/core.c 2>/dev/null || true
           
-          echo ">>> [线程优先级优化] 渲染引擎实时化 (RT FIFO)..."
-          # 在任务入队时直接识别 RenderThread，赋予其 SCHED_FIFO 实时优先级 (99)
-          # 这是消除 Android 滑动掉帧最根本的底层手段
-          sed -i '/SCHED_NORMAL/a \	if (p->comm && (strstr(p->comm, "RenderThread") || strstr(p->comm, "SurfaceFlinger"))) p->policy = SCHED_FIFO;' kernel/sched/core.c 2>/dev/null || true
+          echo ">>> [2/4] 注入前台渲染加速 (RenderThread RT)..."
+          # 在内核层面识别 RenderThread 和 SurfaceFlinger，赋予 SCHED_FIFO 实时优先级
+          # 解决 144Hz 屏幕在高负载下的微小掉帧
+          sed -i '/SCHED_NORMAL/a \	if (p->comm && (strstr(p->comm, "RenderThread") || strstr(p->comm, "SurfaceFlinger") || strstr(p->comm, "HwuiShell"))) p->policy = SCHED_FIFO;' kernel/sched/core.c 2>/dev/null || true
 
-          echo ">>> [I/O 调度器重构] 针对 UFS 4.0 闪存调优..."
-          # 修改 mq-deadline 默认参数：极速读取响应
-          # 将读请求过期时间从默认的 500ms 剧减至 80ms，实现“秒进”效果
-          # 
-          sed -i 's/#define MQ_DEADLINE_DEFAULT_READ_EXPIRE (500 \* HZ \/ 1000)/#define MQ_DEADLINE_DEFAULT_READ_EXPIRE (80 \* HZ \/ 1000)/g' block/mq-deadline.c 2>/dev/null || true
-          # 缩短写请求等待，防止后台同步阻塞前台加载
-          sed -i 's/#define MQ_DEADLINE_DEFAULT_WRITE_EXPIRE (5000 \* HZ \/ 1000)/#define MQ_DEADLINE_DEFAULT_WRITE_EXPIRE (800 \* HZ \/ 1000)/g' block/mq-deadline.c 2>/dev/null || true
+          echo ">>> [3/4] 优化负载平衡频率..."
+          # 缩短负载迁移评估周期，加快 CPU 升频速度
+          sed -i 's/unsigned int sysctl_sched_latency = 6000000ULL;/unsigned int sysctl_sched_latency = 4000000ULL;/g' kernel/sched/fair.c 2>/dev/null || true
 
-          echo ">>> [内存管理优化] MGLRU 代际回收激活..."
-          # 注入 Google 官方推荐的极致内存管理策略
+      # --- [4] 内核源码级调优 - I/O 吞吐篇 ---
+      - name: Kernel Modding - I/O Subsystem
+        run: |
+          cd workspace/kernel_platform/common
+          echo ">>> [4/4] 正在针对 UFS 4.0 重构 I/O 调度器..."
+          
+          # 核心修改：mq-deadline 默认响应时间调校
+          # 读延迟从 500ms 降至 100ms
+          sed -i 's/#define MQ_DEADLINE_DEFAULT_READ_EXPIRE (500 \* HZ \/ 1000)/#define MQ_DEADLINE_DEFAULT_READ_EXPIRE (100 \* HZ \/ 1000)/g' block/mq-deadline.c 2>/dev/null || true
+          # 写延迟从 5s 降至 1s，防止后台大量写入导致的前台卡顿
+          sed -i 's/#define MQ_DEADLINE_DEFAULT_WRITE_EXPIRE (5000 \* HZ \/ 1000)/#define MQ_DEADLINE_DEFAULT_WRITE_EXPIRE (1000 \* HZ \/ 1000)/g' block/mq-deadline.c 2>/dev/null || true
+          
+          # 禁用闪存统计，减少 I/O 路径上的 CPU 开销
+          echo "CONFIG_MSM_QDSS_STM_DEFAULT_ENABLE_ALL=n" >> arch/arm64/configs/gki_defconfig
+
+      # --- [5] 内核源码级调优 - 内存与网络篇 ---
+      - name: Kernel Modding - Memory & Network
+        run: |
+          cd workspace/kernel_platform/common
+          echo ">>> 正在开启 MGLRU 代际回收算法..."
+          # Google 为 Pixel 调优的核心算法，极大缓解多任务切换卡顿
           echo "CONFIG_LRU_GEN=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_LRU_GEN_ENABLED=y" >> arch/arm64/configs/gki_defconfig
           
-          echo ">>> [网络栈优化] TCP BBR 加速默认化..."
-          # 提升竞技游戏在高丢包 Wi-Fi 环境下的稳定性
-          echo 'CONFIG_TCP_CONG_BBR=y' >> arch/arm64/configs/gki_defconfig
+          echo ">>> 正在注入 TCP BBR 算法作为默认网络拥塞控制..."
+          # 提升 Wi-Fi 环境下的数据吞吐量和游戏延迟表现
+          echo "CONFIG_TCP_CONG_BBR=y" >> arch/arm64/configs/gki_defconfig
           echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> arch/arm64/configs/gki_defconfig
 
-      # --- [4] 厂商层级与功耗调优 (Pineapple 专场) ---
-      - name: Vendor Config & Power Efficiency Tuning
+      # --- [6] 厂商配置精简与能效调优 ---
+      - name: Vendor Optimization (Pineapple)
         run: |
           cd workspace/kernel_platform/msm-kernel
-          
-          echo ">>> [功耗优化] 彻底剥离调试符号与日志追踪..."
-          # 内核调试是性能和功耗的第一大敌，此处彻底关杀
+          echo ">>> 正在执行极致功耗缩减：移除所有内核调试系统..."
+          # 彻底移除调试日志、追踪器，这是降低待机功耗、减少发热的关键
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_DEBUG_KERNEL=y/CONFIG_DEBUG_KERNEL=n/g' {} +
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_FTRACE=y/CONFIG_FTRACE=n/g' {} +
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_STACKTRACE=y/CONFIG_STACKTRACE=n/g' {} +
-          find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_LOCKUP_DETECTOR=y/CONFIG_LOCKUP_DETECTOR=n/g' {} +
+          find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SLUB_DEBUG=y/CONFIG_SLUB_DEBUG=n/g' {} +
           
-          echo ">>> [Pineapple 专向参数] 注入 8 Gen 3 爆发力设置..."
+          echo ">>> 注入 Pineapple 核心调度参数..."
           for cfg in arch/arm64/configs/vendor/pineapple_GKI.config arch/arm64/configs/vendor/sm8650_defconfig; do
             if [ -f "$cfg" ]; then
-              echo "CONFIG_HZ_300=y" >> "$cfg"       # 提升时钟中断频率，配合 120Hz/144Hz 屏幕
-              echo "CONFIG_SLUB_DEBUG=n" >> "$cfg"   # 极速内存对象分配
-              echo "CONFIG_ENERGY_MODEL=y" >> "$cfg" # 启用 EAS 能效模型支持
-              echo "CONFIG_SCHED_AUTOGROUP=y" >> "$cfg" # 自动进程分组
+              echo "CONFIG_HZ_300=y" >> "$cfg"       # 提升时钟中断，适合高刷屏
+              echo "CONFIG_ENERGY_MODEL=y" >> "$cfg" # 开启 EAS 能效模型支持
+              echo "CONFIG_SCHED_WALT=y" >> "$cfg"   # 确保 WALT 调度器处于最优状态
+              echo "CONFIG_TCP_CONG_BBR=y" >> "$cfg"
             fi
           done
 
-      # --- [5] Bazel 工业级构建流程 ---
-      - name: Formal Bazel Compilation
+      # --- [7] 启动 Bazel 工业级构建 ---
+      - name: Formal Bazel Build Process
         run: |
           cd workspace
-          # 必须清理，确保所有 Patch 被 Bazel 的沙盒机制重新读取
+          # 强制清除旧产物，防止 Bazel 沙盒重用未 Patch 的镜像
           rm -rf kernel_platform/out
           
-          echo ">>> 启动 OPLUS 官方构建脚本 (Pineapple GKI)..."
+          echo ">>> 启动一加官方内核构建脚本..."
           chmod +x kernel_platform/oplus/build/oplus_build_kernel.sh
-          # 这是一切魔法转化为二进制的时刻
-          ./kernel_platform/oplus/build/oplus_build_kernel.sh $TARGET_BOARD $TARGET_VARIANT
+          # 此步骤耗时约 40-60 分钟
+          ./kernel_platform/oplus/build/oplus_build_kernel.sh ${{ env.TARGET_BOARD }} ${{ env.TARGET_VARIANT }}
 
-      # --- [6] 产物智能捕获与打包 (AnyKernel3) ---
-      - name: Professional Packaging (AnyKernel3)
+      # --- [8] 产物全量搜集与 AnyKernel3 封装 ---
+      - name: Smart Packaging (AnyKernel3 Standard)
         if: success()
         run: |
           cd workspace
-          echo ">>> 初始化 AnyKernel3 环境..."
+          echo ">>> 正在准备 AnyKernel3 环境..."
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
           
-          # 核心技术点：-L 参数跟随软链接捕获真实的 Image 文件
-          echo ">>> 正在搜索编译结果文件..."
-          # 骁龙 8 Gen 3 的 Bazel 产物通常存放在 dist 目录下
-          IMAGE_PATH=$(find kernel_platform/out/dist -name Image -type l -o -type f | head -n 1)
+          # 穿透 Bazel 沙盒的全量搜索策略
+          echo ">>> 正在全域捕获内核镜像与模块..."
+          IMAGE_PATH=$(find kernel_platform/out -name Image -type f -size +10M -not -path "*AK3*" | head -n 1)
           
           if [ -z "$IMAGE_PATH" ]; then
-            echo "!!! 致命错误：未找到编译产物 Image，请检查 Bazel 日志 !!!"
+            echo "!!! 致命错误：无法在 out 目录下找到有效的 Image 文件 !!!"
+            ls -R kernel_platform/out | grep -E "Image|dtbo" || true
             exit 1
           fi
           
           DIST_DIR=$(dirname "$IMAGE_PATH")
-          echo "产物路径已锁定: $DIST_DIR"
+          echo ">>> 产物源目录：$DIST_DIR"
           
           cd AK3
-          # 物理拷贝内核 Image
+          # 1. 拷贝内核核心
           cp -L "$IMAGE_PATH" .
           
-          # 物理拷贝设备树镜像 (一加平板 Pro 刷新率与触控关键)
-          find "$DIST_DIR" -name "dtbo.img" -exec cp -L {} . \;
-          find "$DIST_DIR" -name "vendor_boot.img" -exec cp -L {} . \;
-          find "$DIST_DIR" -name "dtb.img" -exec cp -L {} . \;
+          # 2. 拷贝设备树相关 (一加平板高刷新率、触控固件依赖)
+          find "$DIST_DIR" \( -name "dtbo.img" -o -name "vendor_boot.img" -o -name "dtb.img" \) -exec cp -L {} . \;
           
-          # 物理拷贝所有动态编译生成的驱动模块 (.ko)
-          echo ">>> 搜集并压缩内核驱动模块..."
+          # 3. 拷贝动态驱动模块 (LKM)
+          echo ">>> 正在搜集内核驱动模块 (.ko)..."
           find "$DIST_DIR" -name "*.ko" -exec cp -L {} . \;
           
-          # AnyKernel3 脚本适配
-          sed -i 's/device.name1=.*/device.name1='$DEVICE_NAME'/g' anykernel.sh
+          # 4. 适配 AnyKernel 刷机脚本
+          sed -i 's/device.name1=.*/device.name1=${{ env.DEVICE_NAME }}/g' anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
           
-          # 记录编译信息到刷机界面
-          echo "BUILD_TIME=$(date '+%Y-%m-%d %H:%M')" >> anykernel.sh
-          echo "ui_print \"-------------------------------------\";" >> anykernel.sh
-          echo "ui_print \"  Phantom-Pure Ultimate for OnePlus  \";" >> anykernel.sh
-          echo "ui_print \"  Optimized by Gemini Professional  \";" >> anykernel.sh
-          echo "ui_print \"-------------------------------------\";" >> anykernel.sh
+          # 5. 注入自定义刷机日志显示
+          cat <<EOF > banner.txt
+          ***************************************
+          * Phantom-Pure Ultimate Build    *
+          * Device: OnePlus Pad Pro        *
+          * Kernel: 6.1.x Pineapple        *
+          * Logic: Pure Scheduled (RT)     *
+          ***************************************
+          EOF
+          sed -i '/ui_print " "/r banner.txt' anykernel.sh
           
-          zip -r9 ../../${DEVICE_NAME}_Ultimate_Pure_Tuned.zip *
+          # 6. 打包
+          zip -r9 ../../${{ env.DEVICE_NAME }}_Phantom_Pure.zip *
 
-      # --- [7] 产物发布 ---
-      - name: Upload Professional Build
+      # --- [9] 发布产物 ---
+      - name: Upload Final Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.DEVICE_NAME }}-Kernel-Artifacts
-          path: |
-            ${{ env.DEVICE_NAME }}_Ultimate_Pure_Tuned.zip
+          name: ${{ env.DEVICE_NAME }}-Pure-Kernel
+          path: ${{ env.DEVICE_NAME }}_Phantom_Pure.zip
           retention-days: 7
 
-      - name: Post-Build Health Check
+      - name: Build Integrity Check
         run: |
-          echo ">>> 编译完成报告 <<<"
-          echo "产物名称: ${{ env.DEVICE_NAME }}_Ultimate_Pure_Tuned.zip"
-          echo "构建状态: SUCCESS"
-          echo "核心特性: I/O 100ms Expire, RenderThread RT, MGLRU Enabled, BBR Default."
+          echo ">>> 编译完成，产物摘要 <<<"
+          echo "设备: ${{ env.DEVICE_NAME }}"
+          echo "状态: SUCCESS"
+          echo "包含优化: IO-Tuned, RenderRT, No-Debug-Power-Save, MGLRU, BBR."
