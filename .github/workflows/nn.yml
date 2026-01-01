@@ -1,0 +1,40 @@
+name: Cleanup Environment Only
+
+on:
+  workflow_dispatch:
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: 彻底卸载冗余环境 (Pure Cleanup)
+        run: |
+          echo "开始清理前磁盘空间："
+          df -h
+          
+          # 1. 移除大型开发环境和工具链
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/share/boost
+          sudo rm -rf /usr/share/swift
+          
+          # 2. 移除数据库和不常用的编译器
+          sudo rm -rf /etc/mysql /var/lib/mysql
+          sudo rm -rf /usr/lib/jvm
+          sudo rm -rf /usr/local/graalvm
+          
+          # 3. 清理 Docker 镜像
+          sudo docker image prune -a -f
+          
+          # 4. 清理系统包管理器缓存
+          sudo apt-get update
+          sudo apt-get autoremove -y
+          sudo apt-get clean
+          
+          echo "清理后磁盘空间："
+          df -h
+
+      - name: 完成通知
+        run: echo "环境已纯净化，现在可以执行全新的 Bazel 编译任务。"
