@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro Kernel (Pineapple) with AK3 Pack
+name: OnePlus Pad Pro Kernel (SSG IO) Turbo Build
 
 on:
   workflow_dispatch:
@@ -8,11 +8,9 @@ jobs:
     runs-on: ubuntu-22.04
     
     steps:
-      # 1. 检出清单仓库
       - name: Checkout Manifest
         uses: actions/checkout@v4
 
-      # 2. 深度清理磁盘空间 (防止 8gen3 源码爆磁盘)
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@main
         with:
@@ -24,77 +22,78 @@ jobs:
           docker-images: true
           swap: true
 
-      # 3. 安装依赖项
       - name: Install Dependencies
         run: |
           sudo apt update
           sudo apt install -y python3 python3-pip git curl repo bc bison build-essential \
           flex libssl-dev libelf-dev binutils-dev lz4 zstd zip rsync
 
-      # 4. 配置 Git
       - name: Config Git
         run: |
           git config --global user.email "kernel-bot@example.com"
           git config --global user.name "Kernel-Bot"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "*"
 
-      # 5. 初始化并同步源码 (修复 file:// 协议)
       - name: Repo Init and Sync
         run: |
           mkdir workspace && cd workspace
           repo init -u "file://$GITHUB_WORKSPACE" -m Oneplus_pad_Pro.xml --depth=1
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
-      # 6. 修复内核签名配置
-      - name: Patch Config
+      # 【新增步骤】注入三星 SSG I/O 调度器
+      - name: Patch SSG IO Scheduler
+        run: |
+          cd workspace/kernel_platform/common/block
+          # 下载 SSG 源码文件 (通常是一个 .c 文件)
+          # 注意：这里使用的是公认的 SSG 源码地址，如果失效可替换为其他源
+          curl -LSs https://raw.githubusercontent.com/Cpt-S_Works/SSG-IOSCHED/master/ssg-iosched.c -o ssg-iosched.c
+          
+          # 修改 Makefile 允许编译 ssg
+          echo "obj-y += ssg-iosched.o" >> Makefile
+          
+          # 修改 Kconfig 增加选项 (让它在配置中可见并默认启用)
+          sed -i '/menu "IO Schedulers"/a \
+          config IOSCHED_SSG \
+          	tristate "SSG IO scheduler" \
+          	default y \
+          	---help--- \
+          	  The SSG IO scheduler is a simple and game-optimized scheduler.' Kconfig
+
+      - name: Patch Config & Fix Certs
         run: |
           cd workspace/kernel_platform/msm-kernel
+          # 禁用签名证书
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_TRUSTED_KEYS=.*/CONFIG_SYSTEM_TRUSTED_KEYS=""/g' {} +
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_REVOCATION_KEYS=.*/CONFIG_SYSTEM_REVOCATION_KEYS=""/g' {} +
+          # 强制在 defconfig 中开启 SSG
+          find arch/arm64/configs/ -name "*defconfig" -exec sh -c 'echo "CONFIG_IOSCHED_SSG=y" >> {}' \;
 
-      # 7. 执行编译脚本
       - name: Run Build Script
         run: |
           cd workspace
           chmod +x kernel_platform/oplus/build/oplus_build_kernel.sh
           ./kernel_platform/oplus/build/oplus_build_kernel.sh pineapple gki
 
-      # 8. 打包成 AnyKernel3
       - name: Pack with AnyKernel3
+        if: success()
         run: |
           cd workspace
-          # 下载 AnyKernel3 模板
-          git clone https://github.com/osm0sis/AnyKernel3.git AK3
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
+          REAL_DIST_PATH=$(find out/ -name Image -exec dirname {} + | head -n 1)
+          if [ -z "$REAL_DIST_PATH" ]; then exit 1; fi
+          
           cd AK3
-          
-          # 定义产物路径 (根据高通构建习惯)
-          DIST_PATH="../out/device/qcom/pineapple/dist"
-          
-          # 1. 复制内核镜像
-          if [ -f "$DIST_PATH/Image" ]; then
-            cp "$DIST_PATH/Image" .
-          fi
-          
-          # 2. 复制 DTBO 镜像 (如果存在)
-          if [ -f "$DIST_PATH/dtbo.img" ]; then
-            cp "$DIST_PATH/dtbo.img" .
-          fi
-
-          # 3. 复制驱动模块 (.ko 文件)
+          cp "../$REAL_DIST_PATH/Image" .
+          [ -f "../$REAL_DIST_PATH/dtbo.img" ] && cp "../$REAL_DIST_PATH/dtbo.img" .
           mkdir -p modules/vendor/lib/modules
-          find "$DIST_PATH" -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
+          find "../$REAL_DIST_PATH" -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
-          # 4. 简单修改 anykernel.sh (根据设备名简单调整)
           sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/g' anykernel.sh
-          sed -i 's/device.name2=.*/device.name2=OP592L1/g' anykernel.sh # 这里可以按需修改
-          
-          # 5. 压缩成 zip
-          zip -r9 ../../OnePlus_Pad_Pro_AK3.zip * -x .git* README.md *placeholder
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          zip -r9 ../../OnePlus_Pad_Pro_SSG_Kernel.zip * -x .git* README.md
 
-      # 9. 上传 AK3 压缩包产物
-      - name: Upload AK3 Zip
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus_Pad_Pro_AK3_Kernel
-          path: OnePlus_Pad_Pro_AK3.zip
+          name: OnePlus_Pad_Pro_SSG_AK3
+          path: OnePlus_Pad_Pro_SSG_Kernel.zip
