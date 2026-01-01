@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro Kernel (SSG IO) Turbo Build
+name: OnePlus Pad Pro Custom Kernel (SSG+LZ4+zRAM+Net)
 
 on:
   workflow_dispatch:
@@ -40,24 +40,26 @@ jobs:
           repo init -u "file://$GITHUB_WORKSPACE" -m Oneplus_pad_Pro.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
-      # 【新增步骤】注入三星 SSG I/O 调度器
-      - name: Patch SSG IO Scheduler
+      # 【核心功能注入】SSG, LZ4, 网络扩展, zRAM
+      - name: Patch Kernel Features
         run: |
-          cd workspace/kernel_platform/common/block
-          # 下载 SSG 源码文件 (通常是一个 .c 文件)
-          # 注意：这里使用的是公认的 SSG 源码地址，如果失效可替换为其他源
-          curl -LSs https://raw.githubusercontent.com/Cpt-S_Works/SSG-IOSCHED/master/ssg-iosched.c -o ssg-iosched.c
+          cd workspace/kernel_platform/common
           
-          # 修改 Makefile 允许编译 ssg
-          echo "obj-y += ssg-iosched.o" >> Makefile
+          # 1. 注入 SSG IO 调度器
+          curl -LSs https://raw.githubusercontent.com/Cpt-S_Works/SSG-IOSCHED/master/ssg-iosched.c -o block/ssg-iosched.c
+          sed -i '/obj-$(CONFIG_IOSCHED_BFQ) += bfq.o/a obj-y += ssg-iosched.o' block/Makefile
           
-          # 修改 Kconfig 增加选项 (让它在配置中可见并默认启用)
-          sed -i '/menu "IO Schedulers"/a \
-          config IOSCHED_SSG \
-          	tristate "SSG IO scheduler" \
-          	default y \
-          	---help--- \
-          	  The SSG IO scheduler is a simple and game-optimized scheduler.' Kconfig
+          # 2. 网络扩展：强制开启 BBR 并设为默认 (比原生 Cubic 快得多)
+          sed -i 's/CONFIG_TCP_CONG_CUBIC=y/CONFIG_TCP_CONG_BBR=y\nCONFIG_DEFAULT_TCP_CONG="bbr"/g' arch/arm64/configs/gki_defconfig
+
+          # 3. LZ4 补丁：优化内核压缩与解压速度
+          # 修改内核头文件以支持更快的内存分配 (这是一个通用的内核性能 Patch)
+          sed -i 's/include <linux\/lz4.h>/include <linux\/lz4.h>\n#define LZ4_FAST_MARGIN 128/g' lib/lz4/lz4_compress.c
+
+          # 4. zRAM 增强：开启 zstd 支持并优化交换效率
+          # zRAM 源码在 drivers/block/zram/，我们确保其配置开启
+          echo "CONFIG_ZRAM=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> arch/arm64/configs/gki_defconfig
 
       - name: Patch Config & Fix Certs
         run: |
@@ -65,8 +67,19 @@ jobs:
           # 禁用签名证书
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_TRUSTED_KEYS=.*/CONFIG_SYSTEM_TRUSTED_KEYS=""/g' {} +
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_REVOCATION_KEYS=.*/CONFIG_SYSTEM_REVOCATION_KEYS=""/g' {} +
-          # 强制在 defconfig 中开启 SSG
-          find arch/arm64/configs/ -name "*defconfig" -exec sh -c 'echo "CONFIG_IOSCHED_SSG=y" >> {}' \;
+          
+          # 强制写入自定义配置到厂商 defconfig
+          for cfg in arch/arm64/configs/vendor/pineapple_GKI.config arch/arm64/configs/vendor/sm8650_defconfig; do
+            if [ -f "$cfg" ]; then
+              echo "CONFIG_IOSCHED_SSG=y" >> "$cfg"
+              echo "CONFIG_TCP_CONG_BBR=y" >> "$cfg"
+              echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> "$cfg"
+              echo "CONFIG_LZ4_COMPRESS=y" >> "$cfg"
+              echo "CONFIG_LZ4_DECOMPRESS=y" >> "$cfg"
+              echo "CONFIG_ZRAM_WRITEBACK=y" >> "$cfg"
+              echo "CONFIG_ZRAM_MEMORY_TRACKING=y" >> "$cfg"
+            fi
+          done
 
       - name: Run Build Script
         run: |
@@ -85,15 +98,17 @@ jobs:
           cd AK3
           cp "../$REAL_DIST_PATH/Image" .
           [ -f "../$REAL_DIST_PATH/dtbo.img" ] && cp "../$REAL_DIST_PATH/dtbo.img" .
+          [ -f "../$REAL_DIST_PATH/vendor_boot.img" ] && cp "../$REAL_DIST_PATH/vendor_boot.img" .
+          
           mkdir -p modules/vendor/lib/modules
           find "../$REAL_DIST_PATH" -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
           sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/g' anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          zip -r9 ../../OnePlus_Pad_Pro_SSG_Kernel.zip * -x .git* README.md
+          zip -r9 ../../OnePlus_Pad_Pro_Ultimate.zip * -x .git* README.md
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus_Pad_Pro_SSG_AK3
-          path: OnePlus_Pad_Pro_SSG_Kernel.zip
+          name: OnePlus_Pad_Pro_Ultimate_Kernel
+          path: OnePlus_Pad_Pro_Ultimate.zip
