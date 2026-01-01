@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro Extreme Hybrid Kernel (Performance/Efficiency)
+name: OnePlus Pad Pro Extreme Hybrid Kernel (Path Fixed)
 
 on:
   workflow_dispatch:
@@ -40,60 +40,57 @@ jobs:
           repo init -u "file://$GITHUB_WORKSPACE" -m Oneplus_pad_Pro.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
 
-      # 【核心魔改步骤】针对 8gen3 的性能与功耗平衡
       - name: Extreme Kernel Modding
         run: |
           cd workspace/kernel_platform/common
-          
-          # 1. 注入 MGLRU 内存管理（日常流畅度的基石）
+          # 注入 MGLRU
           echo "CONFIG_LRU_GEN=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_LRU_GEN_ENABLED=y" >> arch/arm64/configs/gki_defconfig
-
-          # 2. 注入 SSG IO 调度（游戏加载极速）
+          # 注入 SSG
           curl -LSs https://raw.githubusercontent.com/Cpt-S_Works/SSG-IOSCHED/master/ssg-iosched.c -o block/ssg-iosched.c
           sed -i '/obj-$(CONFIG_IOSCHED_BFQ) += bfq.o/a obj-y += ssg-iosched.o' block/Makefile
-          
-          # 3. 魔改 Schedutil 调速器参数（核心逻辑）
-          # 缩短升频延迟（游戏响应），增加降频平滑度（日常省电）
+          # 魔改 Schedutil 升频逻辑
           find kernel/sched/cpufreq_schedutil.c -exec sed -i 's/unsigned int up_rate_limit_us/unsigned int up_rate_limit_us = 500/g' {} +
           find kernel/sched/cpufreq_schedutil.c -exec sed -i 's/unsigned int down_rate_limit_us/unsigned int down_rate_limit_us = 20000/g' {} +
-
-          # 4. 优化 TCP 网络扩展 (BBR)
-          echo "CONFIG_TCP_CONG_BBR=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> arch/arm64/configs/gki_defconfig
 
       - name: Vendor Config & Battery Optimization
         run: |
           cd workspace/kernel_platform/msm-kernel
-          # 禁用签名
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_TRUSTED_KEYS=.*/CONFIG_SYSTEM_TRUSTED_KEYS=""/g' {} +
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_REVOCATION_KEYS=.*/CONFIG_SYSTEM_REVOCATION_KEYS=""/g' {} +
-          
-          # 强制开启省电与性能平衡参数
           for cfg in arch/arm64/configs/vendor/pineapple_GKI.config arch/arm64/configs/vendor/sm8650_defconfig; do
             if [ -f "$cfg" ]; then
               echo "CONFIG_LRU_GEN=y" >> "$cfg"
               echo "CONFIG_LRU_GEN_ENABLED=y" >> "$cfg"
               echo "CONFIG_IOSCHED_SSG=y" >> "$cfg"
               echo "CONFIG_HZ_300=y" >> "$cfg"
-              echo "CONFIG_ENERGY_MODEL=y" >> "$cfg"
             fi
           done
 
       - name: Run Build Script
         run: |
           cd workspace
+          # 关键点：有些一加脚本需要进入 kernel_platform 目录执行
           chmod +x kernel_platform/oplus/build/oplus_build_kernel.sh
           ./kernel_platform/oplus/build/oplus_build_kernel.sh pineapple gki
 
-      - name: Pack AnyKernel3 (Smart Search)
-        if: success()
+      - name: Pack AnyKernel3 (Smart Search Fixed)
+        if: always() # 即使出错也尝试运行，方便我们看日志
         run: |
           cd workspace
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
-          REAL_DIST_PATH=$(find out/ -name Image -exec dirname {} + | head -n 1)
-          [ -z "$REAL_DIST_PATH" ] && exit 1
           
+          # 【修正版路径搜索】从根目录开始找 Image，忽略 workspace/AK3 自身
+          echo "正在全盘搜索编译产物..."
+          REAL_DIST_PATH=$(find . -maxdepth 10 -name Image -not -path "*/AK3/*" -exec dirname {} + | head -n 1)
+          
+          if [ -z "$REAL_DIST_PATH" ]; then
+            echo "错误：未在任何地方找到编译生成的 Image 文件。"
+            echo "这通常意味着 'Run Build Script' 步骤失败了，请检查上一步的详细日志。"
+            exit 1
+          fi
+          
+          echo "检测到产物存放于: $REAL_DIST_PATH"
           cd AK3
           cp "../$REAL_DIST_PATH/Image" .
           [ -f "../$REAL_DIST_PATH/dtbo.img" ] && cp "../$REAL_DIST_PATH/dtbo.img" .
@@ -102,13 +99,12 @@ jobs:
           mkdir -p modules/vendor/lib/modules
           find "../$REAL_DIST_PATH" -name "*.ko" -exec cp {} modules/vendor/lib/modules/ \;
           
-          # 刷机脚本适配
           sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/g' anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          zip -r9 ../../OnePlus_Pad_Pro_Hybrid_Extreme.zip * -x .git* README.md
+          zip -r9 ../../OnePlus_Pad_Pro_Hybrid.zip * -x .git* README.md
 
       - name: Upload Result
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus_Pad_Pro_Extreme_Kernel
-          path: OnePlus_Pad_Pro_Hybrid_Extreme.zip
+          name: OnePlus_Pad_Pro_Kernel
+          path: OnePlus_Pad_Pro_Hybrid.zip
