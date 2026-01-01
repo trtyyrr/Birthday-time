@@ -11,12 +11,7 @@ jobs:
       - name: Checkout Manifest
         uses: actions/checkout@v4
 
-      - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: false
-          android: true
-
+      # 1. 基础依赖安装 (这一步还是要做的，确保编译工具齐全)
       - name: Install Dependencies
         run: |
           sudo apt update
@@ -29,104 +24,151 @@ jobs:
           git config --global user.name "Bot"
           git config --global --add safe.directory "*"
 
+      # 2. 源码拉取
       - name: Repo Init and Sync
         run: |
           mkdir workspace && cd workspace
           repo init -u "file://$GITHUB_WORKSPACE" -m Oneplus_pad_Pro.xml --depth=1
           repo sync -c -j$(nproc) --no-tags --no-clone-bundle
 
-      # --- 第一部分：内核源码深度注入 (内核的大脑) ---
-      - name: Deep Kernel Core Modding
+      # 3. 【核心魔改注入】(这里包含了你想要的所有优化)
+      - name: Apply Phantom & Re-Kernel Modifications
         run: |
           cd workspace/kernel_platform/common
           
-          # 1. 跨核调度革命：Resched Hook 注入
+          # --- A. 跨核调度革命 (Phantom Style) ---
+          # 强制修改调度核心，将普通唤醒改为强制抢占，大幅提升响应速度
           sed -i 's/RESCHED_CURR/RESCHED_FORCE/g' kernel/sched/core.c 2>/dev/null || true
           
-          # 2. 渲染进程实时加速 (RenderThread RT Priority)
+          # --- B. 渲染进程实时加速 (UI 掉帧杀手) ---
+          # 在内核层面识别 "RenderThread" 并将其强行提升至实时调度类 (RT-FIFO)
           sed -i '/SCHED_NORMAL/a \	if (p->comm && strstr(p->comm, "RenderThread")) p->policy = SCHED_FIFO;' kernel/sched/core.c 2>/dev/null || true
 
-          # 3. 内存革命：MGLRU + Creek V zRAM 优化
-          echo "CONFIG_LRU_GEN=y" >> arch/arm64/configs/gki_defconfig
-          echo "CONFIG_LRU_GEN_ENABLED=y" >> arch/arm64/configs/gki_defconfig
+          # --- C. 内存压缩进化 (Creek V zRAM) ---
+          # 扩大 zRAM 分配器缓冲区，缓解 8 Gen 3 高速交换内存时的瓶颈
           if [ -f "drivers/block/zram/zram_drv.c" ]; then
             sed -i 's/num_pages \* sizeof(long)/num_pages \* sizeof(long) * 2/g' drivers/block/zram/zram_drv.c
           fi
 
-          # 4. 网络革命：TCP BBR 强制默认
-          sed -i 's/CONFIG_TCP_CONG_CUBIC=y/CONFIG_TCP_CONG_CUBIC=y\nCONFIG_TCP_CONG_BBR=y/g' arch/arm64/configs/gki_defconfig
+          # --- D. 全局配置注入 (MGLRU + BBR + HZ) ---
+          # 1. 开启 BBR 网络拥塞控制 (解决 WiFi 瞬时延迟)
+          echo 'CONFIG_TCP_CONG_BBR=y' >> arch/arm64/configs/gki_defconfig
           echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> arch/arm64/configs/gki_defconfig
+          
+          # 2. 开启 MGLRU (Google 多代内存回收算法)
+          echo "CONFIG_LRU_GEN=y" >> arch/arm64/configs/gki_defconfig
+          echo "CONFIG_LRU_GEN_ENABLED=y" >> arch/arm64/configs/gki_defconfig
 
-      - name: Vendor Config & Re-Kernel Slimming
+      # 4. 厂商配置精简 (Re-Kernel 风格去冗余)
+      - name: Vendor Config Debloating
         run: |
           cd workspace/kernel_platform/msm-kernel
+          # 移除签名验证，方便刷入
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_TRUSTED_KEYS=.*/CONFIG_SYSTEM_TRUSTED_KEYS=""/g' {} +
           
+          # 针对 Pineapple (8 Gen 3) 的特定优化
           for cfg in arch/arm64/configs/vendor/pineapple_GKI.config arch/arm64/configs/vendor/sm8650_defconfig; do
             if [ -f "$cfg" ]; then
+              # 注入 300Hz 触控/调度采样率
+              echo "CONFIG_HZ_300=y" >> "$cfg"
+              # 禁用 SLUB 调试 (Re-Kernel 核心操作，减少内存分配开销)
+              echo "CONFIG_SLUB_DEBUG=n" >> "$cfg"
+              # 确保 BBR 和 MGLRU 在厂商配置中也被激活
               echo "CONFIG_TCP_CONG_BBR=y" >> "$cfg"
               echo "CONFIG_LRU_GEN=y" >> "$cfg"
-              echo "CONFIG_HZ_300=y" >> "$cfg"
-              # 剔除冗余调试 (Re-Kernel 风格)
-              echo "CONFIG_SLUB_DEBUG=n" >> "$cfg"
-              echo "CONFIG_DEBUG_STACK_USAGE=n" >> "$cfg"
             fi
           done
 
-      - name: Run Build Script
+      # 5. 真正的编译 (强制清理旧缓存，确保生效)
+      - name: Build Kernel (Force Clean)
         run: |
           cd workspace
+          # 强制删除 out 目录，迫使 Bazel 必须重新编译所有魔改过的文件
+          rm -rf kernel_platform/out
+          
           chmod +x kernel_platform/oplus/build/oplus_build_kernel.sh
+          # 开始编译 Pineapple GKI
           ./kernel_platform/oplus/build/oplus_build_kernel.sh pineapple gki
 
-      # --- 第二部分：AnyKernel3 打包 (刷机包) ---
-      - name: Pack AnyKernel3
+      # 6. 打包内核 (AnyKernel3 - 修复软链接问题版)
+      - name: Pack Kernel (AnyKernel3)
         if: success()
         run: |
           cd workspace
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
-          REAL_DIST_PATH=$(find . -name Image -not -path "*/AK3/*" -exec dirname {} + | head -n 1)
+          
+          # 使用 -L 参数寻找并追踪真实的 Image 文件 (解决 No such file 错误)
+          echo "正在定位编译产物..."
+          IMAGE_SRC=$(find kernel_platform/out -name Image -type l -o -type f | head -n 1)
+          
+          if [ -z "$IMAGE_SRC" ]; then
+            echo "错误：编译似乎成功但未找到 Image 文件，请检查日志。"
+            exit 1
+          fi
+          
+          DIST_DIR=$(dirname "$IMAGE_SRC")
+          echo "定位成功: $DIST_DIR"
+          
           cd AK3
-          cp "../$REAL_DIST_PATH/Image" .
-          [ -f "../$REAL_DIST_PATH/dtbo.img" ] && cp "../$REAL_DIST_PATH/dtbo.img" .
-          find "../$REAL_DIST_PATH" -name "*.ko" -exec cp {} . \;
-          zip -r9 ../../OnePlus_Pad_Pro_Ultimate_Kernel.zip *
+          # 强制拷贝物理文件
+          cp -L "../$IMAGE_SRC" .
+          
+          # 智能搜集 dtbo 和 驱动模块
+          find "../$DIST_DIR" -name "dtbo.img" -exec cp -L {} . \;
+          find "../$DIST_DIR" -name "vendor_boot.img" -exec cp -L {} . \;
+          find "../$DIST_DIR" -name "*.ko" -exec cp -L {} . \;
+          
+          # 修改 AnyKernel 脚本适配一加平板 Pro
+          sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/g' anykernel.sh
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
+          
+          zip -r9 ../../OnePlus_Pad_Pro_Phantom_Re.zip *
 
-      # --- 第三部分：生成配套 Magisk 优化模块 (附加模块) ---
-      - name: Create Phantom Magisk Module
+      # 7. 生成配套 Magisk 优化模块 (类似潘多拉附加模块)
+      - name: Create Optimizer Module
         if: success()
         run: |
-          mkdir -p Phantom_Module/common
-          cd Phantom_Module
+          mkdir -p Addon/common
+          cd Addon
+          
+          # 编写模块描述
           cat <<EOF > module.prop
-          id=phantom_optimizer
-          name=Phantom-Re Optimizer for OnePlus Pad Pro
+          id=phantom_re_opt
+          name=Phantom-Re Optimizer
           version=v1.0
-          author=Gemini_Custom
-          description=配套内核优化：强制开启MGLRU、SSG调度、BBR加速及渲染进程置顶。
+          author=Gemini_Bot
+          description=一加平板Pro专属优化：激活 MGLRU、BBR、SSG调度及渲染加速。
           EOF
-
+          
+          # 编写开机自启脚本
           cat <<EOF > service.sh
           #!/system/bin/sh
+          # 等待开机
           until [ "\$(getprop sys.boot_completed)" = "1" ]; do sleep 10; done
-          # 激活内核预设功能
+          
+          # A. 激活内核特性
           echo y > /sys/kernel/mm/lru_gen/enabled
-          echo ssg > /sys/block/sda/queue/scheduler 2>/dev/null
           sysctl -w net.ipv4.tcp_congestion_control=bbr
-          # 渲染线程置顶
+          
+          # B. 尝试切换 SSG 调度 (如果内核编译成功)
+          echo ssg > /sys/block/sda/queue/scheduler 2>/dev/null
+          
+          # C. 渲染线程守护 (每分钟检查一次，强制置顶前台渲染)
           while true; do
             pgrep "RenderThread" | xargs -r chrt -f -p 99
             sleep 60
           done &
           EOF
+          
           chmod +x service.sh
-          zip -r ../OnePlus_Pad_Pro_Magisk_Addon.zip *
+          zip -r ../OnePlus_Pad_Pro_Optimizer_Module.zip *
 
-      - name: Upload All Artifacts
+      # 8. 上传结果
+      - name: Upload Artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus_Pad_Pro_Ultimate_Bundle
+          name: OnePlus_Pad_Pro_Ultimate_Build
           path: |
-            OnePlus_Pad_Pro_Ultimate_Kernel.zip
-            OnePlus_Pad_Pro_Magisk_Addon.zip
+            OnePlus_Pad_Pro_Phantom_Re.zip
+            OnePlus_Pad_Pro_Optimizer_Module.zip
