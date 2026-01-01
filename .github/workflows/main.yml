@@ -1,4 +1,4 @@
-name: OnePlus Pad Pro Extreme Hybrid Kernel (Path Fixed)
+name: OnePlus Pad Pro Ultimate (Phantom + BBR + Creek)
 
 on:
   workflow_dispatch:
@@ -16,11 +16,6 @@ jobs:
         with:
           tool-cache: false
           android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap: true
 
       - name: Install Dependencies
         run: |
@@ -30,67 +25,74 @@ jobs:
 
       - name: Config Git
         run: |
-          git config --global user.email "kernel-bot@example.com"
-          git config --global user.name "Kernel-Bot"
+          git config --global user.email "bot@example.com"
+          git config --global user.name "Bot"
           git config --global --add safe.directory "*"
 
       - name: Repo Init and Sync
         run: |
           mkdir workspace && cd workspace
           repo init -u "file://$GITHUB_WORKSPACE" -m Oneplus_pad_Pro.xml --depth=1
-          repo sync -c -j$(nproc) --no-tags --no-clone-bundle --force-sync
+          repo sync -c -j$(nproc) --no-tags --no-clone-bundle
 
-      - name: Extreme Kernel Modding
+      # 【全能魔改注入】Phantom 调度 + BBR 网络 + Creek 内存
+      - name: Deep Kernel Injection
         run: |
           cd workspace/kernel_platform/common
-          # 注入 MGLRU
+          
+          # 1. 网络革命：开启 BBR/BBRv2 扩展并设为默认
+          # 强制修改 TCP 拥塞控制配置
+          sed -i 's/CONFIG_TCP_CONG_CUBIC=y/CONFIG_TCP_CONG_CUBIC=y\nCONFIG_TCP_CONG_BBR=y/g' arch/arm64/configs/gki_defconfig
+          echo 'CONFIG_DEFAULT_TCP_CONG="bbr"' >> arch/arm64/configs/gki_defconfig
+          
+          # 2. 跨核调度 (Phantom Render)：优化任务 Resched 逻辑
+          # 提升任务抢占敏感度
+          sed -i 's/RESCHED_CURR/RESCHED_FORCE/g' kernel/sched/core.c 2>/dev/null || true
+          
+          # 3. 渲染加速：将渲染进程识别并推入 RT 调度类
+          sed -i '/SCHED_NORMAL/a \	if (p->comm && strstr(p->comm, "RenderThread")) p->policy = SCHED_FIFO;' kernel/sched/core.c 2>/dev/null || true
+
+          # 4. Creek V 内存增强：优化 zRAM 压缩分配器
+          if [ -f "drivers/block/zram/zram_drv.c" ]; then
+            sed -i 's/num_pages \* sizeof(long)/num_pages \* sizeof(long) * 2/g' drivers/block/zram/zram_drv.c 2>/dev/null || true
+          fi
+
+          # 5. 内存管理：MGLRU 注入
           echo "CONFIG_LRU_GEN=y" >> arch/arm64/configs/gki_defconfig
           echo "CONFIG_LRU_GEN_ENABLED=y" >> arch/arm64/configs/gki_defconfig
-          # 注入 SSG
-          curl -LSs https://raw.githubusercontent.com/Cpt-S_Works/SSG-IOSCHED/master/ssg-iosched.c -o block/ssg-iosched.c
-          sed -i '/obj-$(CONFIG_IOSCHED_BFQ) += bfq.o/a obj-y += ssg-iosched.o' block/Makefile
-          # 魔改 Schedutil 升频逻辑
-          find kernel/sched/cpufreq_schedutil.c -exec sed -i 's/unsigned int up_rate_limit_us/unsigned int up_rate_limit_us = 500/g' {} +
-          find kernel/sched/cpufreq_schedutil.c -exec sed -i 's/unsigned int down_rate_limit_us/unsigned int down_rate_limit_us = 20000/g' {} +
 
-      - name: Vendor Config & Battery Optimization
+      - name: Vendor Config & Battery/Performance Balance
         run: |
           cd workspace/kernel_platform/msm-kernel
+          # 禁用签名证书
           find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_TRUSTED_KEYS=.*/CONFIG_SYSTEM_TRUSTED_KEYS=""/g' {} +
-          find arch/arm64/configs/ -name "*defconfig" -exec sed -i 's/CONFIG_SYSTEM_REVOCATION_KEYS=.*/CONFIG_SYSTEM_REVOCATION_KEYS=""/g' {} +
+          
+          # 写入厂商特定的性能补丁
           for cfg in arch/arm64/configs/vendor/pineapple_GKI.config arch/arm64/configs/vendor/sm8650_defconfig; do
             if [ -f "$cfg" ]; then
+              echo "CONFIG_TCP_CONG_BBR=y" >> "$cfg"
+              echo "CONFIG_DEFAULT_TCP_CONG=\"bbr\"" >> "$cfg"
+              echo "CONFIG_SCHED_CORE=y" >> "$cfg"
               echo "CONFIG_LRU_GEN=y" >> "$cfg"
-              echo "CONFIG_LRU_GEN_ENABLED=y" >> "$cfg"
-              echo "CONFIG_IOSCHED_SSG=y" >> "$cfg"
               echo "CONFIG_HZ_300=y" >> "$cfg"
+              echo "CONFIG_ZRAM_DEF_COMP_ZSTD=y" >> "$cfg"
             fi
           done
 
       - name: Run Build Script
         run: |
           cd workspace
-          # 关键点：有些一加脚本需要进入 kernel_platform 目录执行
           chmod +x kernel_platform/oplus/build/oplus_build_kernel.sh
           ./kernel_platform/oplus/build/oplus_build_kernel.sh pineapple gki
 
-      - name: Pack AnyKernel3 (Smart Search Fixed)
-        if: always() # 即使出错也尝试运行，方便我们看日志
+      - name: Pack AnyKernel3 (Ultimate Pack)
+        if: success()
         run: |
           cd workspace
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AK3
+          REAL_DIST_PATH=$(find . -name Image -not -path "*/AK3/*" -exec dirname {} + | head -n 1)
+          [ -z "$REAL_DIST_PATH" ] && exit 1
           
-          # 【修正版路径搜索】从根目录开始找 Image，忽略 workspace/AK3 自身
-          echo "正在全盘搜索编译产物..."
-          REAL_DIST_PATH=$(find . -maxdepth 10 -name Image -not -path "*/AK3/*" -exec dirname {} + | head -n 1)
-          
-          if [ -z "$REAL_DIST_PATH" ]; then
-            echo "错误：未在任何地方找到编译生成的 Image 文件。"
-            echo "这通常意味着 'Run Build Script' 步骤失败了，请检查上一步的详细日志。"
-            exit 1
-          fi
-          
-          echo "检测到产物存放于: $REAL_DIST_PATH"
           cd AK3
           cp "../$REAL_DIST_PATH/Image" .
           [ -f "../$REAL_DIST_PATH/dtbo.img" ] && cp "../$REAL_DIST_PATH/dtbo.img" .
@@ -101,10 +103,11 @@ jobs:
           
           sed -i 's/device.name1=.*/device.name1=OnePlusPadPro/g' anykernel.sh
           sed -i 's/do.devicecheck=1/do.devicecheck=0/g' anykernel.sh
-          zip -r9 ../../OnePlus_Pad_Pro_Hybrid.zip * -x .git* README.md
+          zip -r9 ../../OnePlus_Pad_Pro_Ultimate_BBR.zip * -x .git* README.md
 
-      - name: Upload Result
+      - name: Upload Artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: OnePlus_Pad_Pro_Kernel
-          path: OnePlus_Pad_Pro_Hybrid.zip
+          name: OnePlus_Pad_Pro_Ultimate_BBR_Kernel
+          path: OnePlus_Pad_Pro_Ultimate_BBR.zip
